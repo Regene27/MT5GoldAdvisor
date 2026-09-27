@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>XAUUSD Signal Dashboard – Buy/Sell Probability</title>
+  <meta name="description" content="Real-time XAUUSD buy and sell probability dashboard using EMA 20/50/200 and SMA 5/19/50 indicators powered by MetaTrader 5." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <style>
+    /* ══════════════════════════════════════════
+       DESIGN TOKENS
+    ══════════════════════════════════════════ */
+    :root {
+      --bg-base:      #080b12;
+      --bg-panel:     #0e1420;
+      --bg-card:      #131926;
+      --bg-hover:     #1a2235;
+      --border:       rgba(255,255,255,0.07);
+      --border-glow:  rgba(251,188,5,0.35);
+
+      --gold:         #fbbf05;
+      --gold-light:   #fcd34d;
+      --gold-dim:     rgba(251,188,5,0.12);
+
+      --buy:          #22d3a0;
+      --buy-dim:      rgba(34,211,160,0.12);
+      --buy-glow:     rgba(34,211,160,0.35);
+
+      --sell:         #f4566a;
+      --sell-dim:     rgba(244,86,106,0.12);
+      --sell-glow:    rgba(244,86,106,0.35);
+
+      --neutral:      #a3afc4;
+      --text-primary: #e8edf5;
+      --text-muted:   #6b7a96;
+
+      --radius-sm:  8px;
+      --radius-md: 14px;
+      --radius-lg: 20px;
+
+      --shadow-card: 0 4px 24px rgba(0,0,0,0.4);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg-base);
+      color: var(--text-primary);
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(251,188,5,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(251,188,5,0.03) 1px, transparent 1px);
+      background-size: 48px 48px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ─── HEADER ─── */
+    header {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(8,11,18,0.85);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 32px;
+    }
+    .header-inner {
+      max-width: 1400px; margin: 0 auto;
+      height: 68px; display: flex;
+      align-items: center; justify-content: space-between;
+    }
+    .logo { display: flex; align-items: center; gap: 12px; }
+    .logo-icon {
+      width: 40px; height: 40px;
+      background: linear-gradient(135deg, #fbbf05, #f59e0b);
+      border-radius: 10px; display: grid; place-items: center;
+      font-size: 20px; box-shadow: 0 4px 16px rgba(251,188,5,0.4);
+    }
+    .logo-text { font-size: 18px; font-weight: 700; }
+    .logo-text span { color: var(--gold); }
+    .header-right { display: flex; align-items: center; gap: 20px; }
+
+    .status-badge {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 14px; border-radius: 100px;
+      font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
+      border: 1px solid var(--border); background: var(--bg-card);
+      transition: all 0.3s;
+    }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--text-muted); transition: background 0.3s;
+    }
+    .status-badge.connected .status-dot {
+      background: var(--buy); box-shadow: 0 0 6px var(--buy);
+      animation: pulse-dot 2s infinite;
+    }
+    .status-badge.demo .status-dot {
+      background: var(--gold); box-shadow: 0 0 6px var(--gold);
+      animation: pulse-dot 2s infinite;
+    }
+    @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .last-update { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+
+    /* ─── RING ─── */
+    .refresh-ring { width: 32px; height: 32px; }
+    .refresh-ring svg { transform: rotate(-90deg); width: 32px; height: 32px; }
+    .refresh-ring circle { fill: none; stroke-width: 3; }
+    .refresh-ring .track  { stroke: rgba(255,255,255,0.08); }
+    .refresh-ring .fill   { stroke: var(--gold); stroke-linecap: round;
+      stroke-dasharray: 81.7; stroke-dashoffset: 81.7; transition: stroke-dashoffset 1s linear; }
+
+    /* ─── MAIN ─── */
+    main {
+      position: relative; z-index: 1;
+      max-width: 1400px; margin: 0 auto;
+      padding: 32px 24px 64px;
+    }
+
+    /* ─── ERROR ─── */
+    #error-banner {
+      display: none; background: rgba(244,86,106,0.1);
+      border: 1px solid rgba(244,86,106,0.25); border-radius: var(--radius-md);
+      padding: 14px 20px; margin-bottom: 24px; font-size: 13px; color: var(--sell);
+      align-items: center; gap: 10px;
+    }
+
+    /* ─── HERO ─── */
+    .hero {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 24px; margin-bottom: 32px; flex-wrap: wrap;
+    }
+    .price-block { display: flex; flex-direction: column; gap: 4px; }
+    .pair-label { font-size: 12px; font-weight: 600; letter-spacing: 0.12em; color: var(--text-muted); text-transform: uppercase; }
+    .price-value {
+      font-size: 52px; font-weight: 800; font-family: 'JetBrains Mono', monospace;
+      color: var(--gold); letter-spacing: -1px; line-height: 1;
+      text-shadow: 0 0 40px rgba(251,188,5,0.3); transition: color 0.4s;
+    }
+    .price-meta { font-size: 13px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+
+    .signal-pill {
+      padding: 14px 32px; border-radius: var(--radius-lg);
+      font-size: 22px; font-weight: 800; letter-spacing: 0.06em;
+      text-transform: uppercase; transition: all 0.5s ease; border: 1px solid transparent;
+    }
+    .signal-pill.buy  { background: var(--buy-dim);  color: var(--buy);  border-color: var(--buy-glow);  box-shadow: 0 0 30px rgba(34,211,160,0.2); }
+    .signal-pill.sell { background: var(--sell-dim); color: var(--sell); border-color: var(--sell-glow); box-shadow: 0 0 30px rgba(244,86,106,0.2); }
+    .signal-pill.neutral { background: rgba(163,175,196,0.08); color: var(--neutral); border-color: rgba(163,175,196,0.2); }
+
+    /* ─── GAUGES ─── */
+    .gauges-section { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 28px; }
+    .gauge-card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 28px 32px;
+      display: flex; flex-direction: column; gap: 16px;
+      box-shadow: var(--shadow-card); transition: transform 0.3s, box-shadow 0.3s;
+      position: relative; overflow: hidden;
+    }
+    .gauge-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    }
+    .gauge-card.buy-card::before  { background: linear-gradient(90deg, #0d9966, var(--buy), #34d399); }
+    .gauge-card.sell-card::before { background: linear-gradient(90deg, #9b1c2e, var(--sell), #fb7185); }
+    .gauge-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-card), 0 8px 40px rgba(0,0,0,0.3); }
+
+    .gauge-header { display: flex; align-items: center; justify-content: space-between; }
+    .gauge-label {
+      font-size: 12px; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; display: flex; align-items: center; gap: 8px;
+    }
+    .gauge-label .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .buy-card  .dot { background: var(--buy);  box-shadow: 0 0 8px var(--buy); }
+    .sell-card .dot { background: var(--sell); box-shadow: 0 0 8px var(--sell); }
+
+    .gauge-pct {
+      font-size: 56px; font-weight: 900; font-family: 'JetBrains Mono', monospace;
+      line-height: 1; transition: all 0.5s ease;
+    }
+    .buy-card  .gauge-pct { color: var(--buy);  text-shadow: 0 0 40px rgba(34,211,160,0.4); }
+    .sell-card .gauge-pct { color: var(--sell); text-shadow: 0 0 40px rgba(244,86,106,0.4); }
+
+    .gauge-bar-wrap { height: 10px; background: rgba(255,255,255,0.05); border-radius: 100px; overflow: hidden; }
+    .gauge-bar { height: 100%; border-radius: 100px; transition: width 0.8s cubic-bezier(0.34,1.56,0.64,1); }
+    .buy-card  .gauge-bar { background: linear-gradient(90deg, #0d9966, var(--buy), #34d399); }
+    .sell-card .gauge-bar { background: linear-gradient(90deg, #9b1c2e, var(--sell), #fb7185); }
+    .gauge-sublabel { font-size: 11px; color: var(--text-muted); letter-spacing: 0.04em; }
+
+    /* ─── INDICATORS ─── */
+    .indicators-section { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 28px; }
+    .indicator-card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 24px; box-shadow: var(--shadow-card); transition: transform 0.3s;
+    }
+    .indicator-card:hover { transform: translateY(-2px); }
+    .indicator-title { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+    .indicator-icon { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; font-size: 16px; }
+    .ema-icon { background: rgba(139,92,246,0.15); border: 1px solid rgba(139,92,246,0.25); }
+    .sma-icon { background: rgba(249,115,22,0.12); border: 1px solid rgba(249,115,22,0.22); }
+    .indicator-name { font-size: 15px; font-weight: 700; }
+    .indicator-sub  { font-size: 11px; color: var(--text-muted); }
+
+    .ind-split { display: flex; border-radius: 100px; overflow: hidden; height: 8px; margin-bottom: 12px; }
+    .ind-split-buy  { background: var(--buy);  transition: width 0.8s ease; }
+    .ind-split-sell { background: var(--sell); transition: width 0.8s ease; }
+    .ind-pct-row { display: flex; justify-content: space-between; margin-bottom: 20px; font-size: 13px; font-weight: 600; }
+    .ind-buy-pct  { color: var(--buy); }
+    .ind-sell-pct { color: var(--sell); }
+
+    .values-grid { display: flex; flex-direction: column; gap: 6px; }
+    .value-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 8px 10px; border-radius: var(--radius-sm);
+      background: rgba(255,255,255,0.03); font-size: 12px; transition: background 0.2s;
+    }
+    .value-row:hover { background: rgba(255,255,255,0.06); }
+    .value-row-label { font-weight: 600; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+    .value-row-num   { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 12px; }
+    .slope-positive  { color: var(--buy); }
+    .slope-negative  { color: var(--sell); }
+    .slope-neutral   { color: var(--text-muted); }
+
+    /* ─── CHART SECTION ─── */
+    .chart-section {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 28px; box-shadow: var(--shadow-card); margin-bottom: 28px;
+    }
+    .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
+    .section-title { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+    .legend-dot { width: 22px; height: 3px; border-radius: 2px; }
+    .chart-wrap { position: relative; height: 340px; }
+    .prob-chart-wrap { position: relative; height: 180px; }
+
+    /* ─── FOOTER ─── */
+    footer {
+      text-align: center; padding: 32px 24px; color: var(--text-muted);
+      font-size: 12px; border-top: 1px solid var(--border); position: relative; z-index: 1;
+    }
+    footer span { color: var(--gold); }
+
+    /* ─── ANIMATIONS ─── */
+    @keyframes pop { 0%{transform:scale(1.1)} 100%{transform:scale(1)} }
+    .popped { animation: pop 0.3s ease-out; }
+
+    /* ─── RESPONSIVE ─── */
+    @media (max-width: 900px) {
+      .gauges-section, .indicators-section { grid-template-columns: 1fr; }
+      .price-value { font-size: 38px; }
+      .gauge-pct   { font-size: 44px; }
+    }
+    @media (max-width: 600px) {
+      header { padding: 0 16px; }
+      main   { padding: 20px 16px 48px; }
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="logo">
+      <div class="logo-icon">⚡</div>
+      <div>
+        <div class="logo-text">XAUUSD <span>Signal</span> Dashboard</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="refresh-ring" title="Next update countdown">
+        <svg viewBox="0 0 32 32">
+          <circle class="track" cx="16" cy="16" r="13"/>
+          <circle class="fill" id="ringFill" cx="16" cy="16" r="13"/>
+        </svg>
+      </div>
+      <div class="last-update" id="lastUpdate">--:--:-- UTC</div>
+      <div class="status-badge" id="statusBadge">
+        <div class="status-dot"></div>
+        <span id="statusText">Connecting…</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <div id="error-banner">
+    <span>⚠</span>
+    <span id="error-msg">Unable to reach server.</span>
+  </div>
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="price-block">
+      <div class="pair-label">XAU / USD · M1 · MetaTrader 5</div>
+      <div class="price-value" id="priceValue">—</div>
+      <div class="price-meta" id="priceMeta">Fetching live price…</div>
+    </div>
+    <div class="signal-pill neutral" id="signalPill">—</div>
+  </div>
+
+  <!-- BIG GAUGES -->
+  <div class="gauges-section">
+    <div class="gauge-card buy-card">
+      <div class="gauge-header">
+        <div class="gauge-label"><div class="dot"></div>BUY PROBABILITY</div>
+        <div style="font-size:11px;color:var(--text-muted)">BLENDED</div>
+      </div>
+      <div class="gauge-pct" id="buyPct">—</div>
+      <div class="gauge-bar-wrap"><div class="gauge-bar" id="buyBar" style="width:0%"></div></div>
+      <div class="gauge-sublabel">Combined EMA(20,50,200) + SMA(5,19,50) signal</div>
+    </div>
+    <div class="gauge-card sell-card">
+      <div class="gauge-header">
+        <div class="gauge-label"><div class="dot"></div>SELL PROBABILITY</div>
+        <div style="font-size:11px;color:var(--text-muted)">BLENDED</div>
+      </div>
+      <div class="gauge-pct" id="sellPct">—</div>
+      <div class="gauge-bar-wrap"><div class="gauge-bar" id="sellBar" style="width:0%"></div></div>
+      <div class="gauge-sublabel">Combined EMA(20,50,200) + SMA(5,19,50) signal</div>
+    </div>
+  </div>
+
+  <!-- INDICATOR BREAKDOWN -->
+  <div class="indicators-section">
+    <!-- EMA -->
+    <div class="indicator-card">
+      <div class="indicator-title">
+        <div class="indicator-icon ema-icon">📈</div>
+        <div><div class="indicator-name">EMA Indicator</div><div class="indicator-sub">Periods: 20 · 50 · 200</div></div>
+      </div>
+      <div class="ind-split">
+        <div class="ind-split-buy"  id="emaBuyBar"  style="width:50%"></div>
+        <div class="ind-split-sell" id="emaSellBar" style="width:50%"></div>
+      </div>
+      <div class="ind-pct-row">
+        <span class="ind-buy-pct">BUY <span id="emaBuyPct">—</span></span>
+        <span class="ind-sell-pct">SELL <span id="emaSellPct">—</span></span>
+      </div>
+      <div class="values-grid">
+        <div class="value-row"><span class="value-row-label">EMA 20</span><span class="value-row-num" id="ema20">—</span></div>
+        <div class="value-row"><span class="value-row-label">EMA 50</span><span class="value-row-num" id="ema50">—</span></div>
+        <div class="value-row"><span class="value-row-label">EMA 200</span><span class="value-row-num" id="ema200">—</span></div>
+        <div class="value-row"><span class="value-row-label">Slope EMA20</span><span class="value-row-num" id="slopeEma20">—</span></div>
+        <div class="value-row"><span class="value-row-label">Slope EMA50</span><span class="value-row-num" id="slopeEma50">—</span></div>
+        <div class="value-row"><span class="value-row-label">Slope EMA200</span><span class="value-row-num" id="slopeEma200">—</span></div>
+      </div>
+    </div>
+    <!-- SMA -->
+    <div class="indicator-card">
+      <div class="indicator-title">
+        <div class="indicator-icon sma-icon">📊</div>
+        <div><div class="indicator-name">SMA Indicator</div><div class="indicator-sub">Periods: 8 · 19 · 50</div></div>
+      </div>
+      <div class="ind-split">
+        <div class="ind-split-buy"  id="smaBuyBar"  style="width:50%"></div>
+        <div class="ind-split-sell" id="smaSellBar" style="width:50%"></div>
+      </div>
+      <div class="ind-pct-row">
+        <span class="ind-buy-pct">BUY <span id="smaBuyPct">—</span></span>
+        <span class="ind-sell-pct">SELL <span id="smaSellPct">—</span></span>
+      </div>
+      <div class="values-grid">
+        <div class="value-row"><span class="value-row-label">Stack</span><span class="value-row-num" id="smaStack">—</span></div>
+        <div class="value-row"><span class="value-row-label">SMA 8</span><span class="value-row-num" id="sma8">—</span></div>
+        <div class="value-row"><span class="value-row-label">SMA 19</span><span class="value-row-num" id="sma19">—</span></div>
+        <div class="value-row"><span class="value-row-label">SMA 50</span><span class="value-row-num" id="sma50">—</span></div>
+        <div class="value-row"><span class="value-row-label">Slope SMA8</span><span class="value-row-num" id="slopeSma8">—</span></div>
+        <div class="value-row"><span class="value-row-label">Slope SMA19</span><span class="value-row-num" id="slopeSma19">—</span></div>
+        <div class="value-row"><span class="value-row-label">Slope SMA50</span><span class="value-row-num" id="slopeSma50">—</span></div>
+        <div class="value-row"><span class="value-row-label">Bull Cross</span><span class="value-row-num" id="bullCross">—</span></div>
+        <div class="value-row"><span class="value-row-label">Bear Cross</span><span class="value-row-num" id="bearCross">—</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PRICE + MA CHART -->
+  <div class="chart-section">
+    <div class="section-header">
+      <div class="section-title"><span>📉</span> Price &amp; Moving Averages</div>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#fbbf05"></div>Close</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div>EMA20</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#a78bfa;opacity:.7"></div>EMA50</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#c4b5fd;opacity:.5"></div>EMA200</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#f97316"></div>SMA8</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#fb923c;opacity:.7"></div>SMA19</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#fdba74;opacity:.5"></div>SMA50</div>
+      </div>
+    </div>
+    <div class="chart-wrap"><canvas id="maChart"></canvas></div>
+  </div>
+
+  <!-- PROB HISTORY CHART -->
+  <div class="chart-section">
+    <div class="section-header">
+      <div class="section-title"><span>📊</span> Probability History (last 2 min · 1s updates)</div>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-dot" style="background:var(--buy)"></div>Buy %</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--sell)"></div>Sell %</div>
+      </div>
+    </div>
+    <div class="prob-chart-wrap"><canvas id="probChart"></canvas></div>
+  </div>
+
+  <!-- ══ BACKTEST SECTION ══ -->
+  <div style="margin-top:12px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+    <div style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:10px;">
+      <span style="font-size:22px">🧪</span> 30-Day Backtest
+      <span style="font-size:11px;font-weight:500;color:var(--text-muted);background:var(--bg-card);border:1px solid var(--border);padding:3px 10px;border-radius:100px;">H1 · XAUUSDm · Past 30 Days</span>
+    </div>
+    <button id="btRunBtn" onclick="loadBacktest()" style="
+      background:linear-gradient(135deg,#fbbf05,#f59e0b);color:#000;font-weight:700;
+      border:none;border-radius:10px;padding:10px 22px;font-size:13px;cursor:pointer;
+      font-family:'Inter',sans-serif;letter-spacing:0.04em;transition:opacity 0.2s;
+    " onmouseover="this.style.opacity='.8'" onmouseout="this.style.opacity='1'">▶ Run Backtest</button>
+  </div>
+
+  <!-- Win-rate stat cards -->
+  <div id="btStats" style="display:none;margin-bottom:20px;">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:16px;">
+      <!-- 3h -->
+      <div class="gauge-card" style="padding:18px 20px;gap:10px;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--text-muted)">3H FORWARD WIN RATE</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div><div style="font-size:9px;color:var(--text-muted);margin-bottom:2px">BUY (≥55%)</div><div id="bt3hBuy" style="font-size:24px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--buy)">—</div></div>
+          <div><div style="font-size:9px;color:var(--text-muted);margin-bottom:2px">SELL (≥55%)</div><div id="bt3hSell" style="font-size:24px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--sell)">—</div></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted)" id="bt3hCounts"></div>
+      </div>
+      <!-- 6h -->
+      <div class="gauge-card" style="padding:18px 20px;gap:10px;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--text-muted)">6H FORWARD WIN RATE</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div><div style="font-size:9px;color:var(--text-muted);margin-bottom:2px">BUY (≥55%)</div><div id="bt6hBuy" style="font-size:24px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--buy)">—</div></div>
+          <div><div style="font-size:9px;color:var(--text-muted);margin-bottom:2px">SELL (≥55%)</div><div id="bt6hSell" style="font-size:24px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--sell)">—</div></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted)" id="bt6hCounts"></div>
+      </div>
+      <!-- 24h -->
+      <div class="gauge-card" style="padding:18px 20px;gap:10px;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--text-muted)">24H FORWARD WIN RATE</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div><div style="font-size:9px;color:var(--text-muted);margin-bottom:2px">BUY (≥55%)</div><div id="bt24hBuy" style="font-size:24px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--buy)">—</div></div>
+          <div><div style="font-size:9px;color:var(--text-muted);margin-bottom:2px">SELL (≥55%)</div><div id="bt24hSell" style="font-size:24px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--sell)">—</div></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted)" id="bt24hCounts"></div>
+      </div>
+      <!-- Signal distribution -->
+      <div class="gauge-card" style="padding:18px 20px;gap:8px;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--text-muted)">SIGNAL DISTRIBUTION</div>
+        <div id="btDist" style="display:flex;flex-direction:column;gap:5px;font-size:11px;font-family:'JetBrains Mono',monospace;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Backtest H1 price chart -->
+  <div class="chart-section" id="btChartSection" style="display:none;">
+    <div class="section-header">
+      <div class="section-title"><span>📈</span> H1 Price + MAs · Past 30 Days</div>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#fbbf05"></div>Close</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div>EMA20</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#a78bfa;opacity:.7"></div>EMA50</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#c4b5fd;opacity:.5"></div>EMA200</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#f97316"></div>SMA8</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#fb923c;opacity:.7"></div>SMA19</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#fdba74;opacity:.5"></div>SMA50</div>
+      </div>
+    </div>
+    <div style="position:relative;height:340px"><canvas id="btPriceChart"></canvas></div>
+  </div>
+
+  <!-- Backtest probability chart -->
+  <div class="chart-section" id="btProbSection" style="display:none;margin-top:20px;">
+    <div class="section-header">
+      <div class="section-title"><span>📊</span> Historical Buy/Sell Probability · Past 30 Days (H1)</div>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-dot" style="background:var(--buy)"></div>Buy %</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--sell)"></div>Sell %</div>
+      </div>
+    </div>
+    <div style="position:relative;height:160px"><canvas id="btProbChart"></canvas></div>
+  </div>
+
+</main>
+
+<footer>
+  Built with <span>♥</span> for XAUUSD trading · EMA (20/50/200) + SMA (8/19/50) · Live refresh: 1s · Data via MetaTrader 5
+</footer>
+
+<script>
+const API_BASE   = 'http://localhost:5000';
+const REFRESH_MS = 1000;   // 1-second live refresh
+
+const probHistory = { labels: [], buy: [], sell: [] };
+const MAX_PROB    = 120;   // keep 2 minutes of 1s ticks in the history chart
+
+Chart.defaults.color       = '#6b7a96';
+Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
+Chart.defaults.font.family = "'JetBrains Mono', monospace";
+Chart.defaults.font.size   = 11;
+
+let maChart = null, probChart = null;
+
+function buildMAChart() {
+  const ctx = document.getElementById('maChart').getContext('2d');
+  maChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label:'Close',  data:[], borderColor:'#fbbf05', borderWidth:1.5, pointRadius:0, tension:0.2, fill:false },
+        { label:'EMA20',  data:[], borderColor:'#8b5cf6', borderWidth:1.2, pointRadius:0, tension:0.4, fill:false },
+        { label:'EMA50',  data:[], borderColor:'#a78bfa', borderWidth:1.2, pointRadius:0, tension:0.4, fill:false, borderDash:[4,3] },
+        { label:'EMA200', data:[], borderColor:'#c4b5fd', borderWidth:1.5, pointRadius:0, tension:0.4, fill:false, borderDash:[8,4] },
+        { label:'SMA8',   data:[], borderColor:'#f97316', borderWidth:1.2, pointRadius:0, tension:0.3, fill:false },
+        { label:'SMA19',  data:[], borderColor:'#fb923c', borderWidth:1.2, pointRadius:0, tension:0.3, fill:false, borderDash:[4,3] },
+        { label:'SMA50',  data:[], borderColor:'#fdba74', borderWidth:1.2, pointRadius:0, tension:0.3, fill:false, borderDash:[8,4] },
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      interaction:{ mode:'index', intersect:false },
+      plugins:{
+        legend:{ display:false },
+        tooltip:{
+          backgroundColor:'rgba(14,20,32,0.95)', borderColor:'rgba(255,255,255,0.1)', borderWidth:1, padding:12,
+          callbacks:{
+            title: items => items[0].label,
+            label: item  => ` ${item.dataset.label}: ${item.parsed.y?.toFixed(2) ?? '—'}`
+          }
+        }
+      },
+      scales:{
+        x:{ ticks:{ maxTicksLimit:8, maxRotation:0 }, grid:{ color:'rgba(255,255,255,0.04)' } },
+        y:{ ticks:{ maxTicksLimit:6 }, grid:{ color:'rgba(255,255,255,0.04)' }, position:'right' }
+      }
+    }
+  });
+}
+
+function buildProbChart() {
+  const ctx = document.getElementById('probChart').getContext('2d');
+  probChart = new Chart(ctx, {
+    type:'line',
+    data:{
+      labels:[],
+      datasets:[
+        { label:'Buy %',  data:[], borderColor:'#22d3a0', backgroundColor:'rgba(34,211,160,0.08)', borderWidth:2, pointRadius:0, tension:0.4, fill:true },
+        { label:'Sell %', data:[], borderColor:'#f4566a', backgroundColor:'rgba(244,86,106,0.08)', borderWidth:2, pointRadius:0, tension:0.4, fill:true }
+      ]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{ mode:'index', intersect:false },
+      plugins:{
+        legend:{ display:false },
+        tooltip:{
+          backgroundColor:'rgba(14,20,32,0.95)', borderColor:'rgba(255,255,255,0.1)', borderWidth:1,
+          callbacks:{ label: item => ` ${item.dataset.label}: ${item.parsed.y?.toFixed(1)}%` }
+        }
+      },
+      scales:{
+        x:{ ticks:{ maxTicksLimit:6, maxRotation:0 }, grid:{ color:'rgba(255,255,255,0.04)' } },
+        y:{ min:0, max:100, ticks:{ callback:v=>v+'%', stepSize:25 }, grid:{ color:'rgba(255,255,255,0.04)' }, position:'right' }
+      }
+    }
+  });
+}
+
+function fmtTime(iso) {
+  return new Date(iso).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+}
+
+function popEl(el) {
+  el.classList.remove('popped');
+  void el.offsetWidth;
+  el.classList.add('popped');
+}
+
+function setSlope(id, val) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (val === null || val === undefined) { el.textContent='—'; el.className='value-row-num slope-neutral'; return; }
+  el.textContent = (val>0?'+':'')+val.toFixed(5);
+  el.className   = 'value-row-num ' + (val>0?'slope-positive':val<0?'slope-negative':'slope-neutral');
+}
+
+// Ring animation
+let ringStart = Date.now();
+function animateRing() {
+  const fill = document.getElementById('ringFill');
+  const elapsed  = (Date.now() - ringStart) % REFRESH_MS;
+  const fraction = elapsed / REFRESH_MS;
+  fill.style.strokeDashoffset = 81.7 - fraction * 81.7;
+  requestAnimationFrame(animateRing);
+}
+animateRing();
+
+function applySignal(data) {
+  const { price, label, buy_pct, sell_pct,
+          ema_buy_pct, ema_sell_pct, ema_values,
+          sma_buy_pct, sma_sell_pct, sma_values } = data;
+
+  const priceEl = document.getElementById('priceValue');
+  priceEl.textContent = price ? price.toFixed(2) : '—';
+  popEl(priceEl);
+
+  document.getElementById('priceMeta').textContent = 'XAUUSD · M1 · ' + new Date().toUTCString();
+
+  const pill = document.getElementById('signalPill');
+  pill.textContent = label || '—';
+  pill.className = 'signal-pill ' + (label?.includes('BUY') ? 'buy' : label?.includes('SELL') ? 'sell' : 'neutral');
+
+  const buyEl  = document.getElementById('buyPct');
+  const sellEl = document.getElementById('sellPct');
+  buyEl.textContent  = buy_pct  != null ? buy_pct.toFixed(1)+'%'  : '—';
+  sellEl.textContent = sell_pct != null ? sell_pct.toFixed(1)+'%' : '—';
+  popEl(buyEl); popEl(sellEl);
+  document.getElementById('buyBar').style.width  = (buy_pct  ?? 0)+'%';
+  document.getElementById('sellBar').style.width = (sell_pct ?? 0)+'%';
+
+  // EMA
+  document.getElementById('emaBuyPct').textContent  = ema_buy_pct  != null ? ema_buy_pct.toFixed(1)+'%'  : '—';
+  document.getElementById('emaSellPct').textContent = ema_sell_pct != null ? ema_sell_pct.toFixed(1)+'%' : '—';
+  document.getElementById('emaBuyBar').style.width  = (ema_buy_pct  ?? 50)+'%';
+  document.getElementById('emaSellBar').style.width = (ema_sell_pct ?? 50)+'%';
+  if (ema_values) {
+    document.getElementById('ema20').textContent  = ema_values.ema20  ?? '—';
+    document.getElementById('ema50').textContent  = ema_values.ema50  ?? '—';
+    document.getElementById('ema200').textContent = ema_values.ema200 ?? '—';
+    setSlope('slopeEma20',  ema_values.slope_ema20);
+    setSlope('slopeEma50',  ema_values.slope_ema50);
+    setSlope('slopeEma200', ema_values.slope_ema200);
+  }
+
+  // SMA
+  document.getElementById('smaBuyPct').textContent  = sma_buy_pct  != null ? sma_buy_pct.toFixed(1)+'%'  : '—';
+  document.getElementById('smaSellPct').textContent = sma_sell_pct != null ? sma_sell_pct.toFixed(1)+'%' : '—';
+  document.getElementById('smaBuyBar').style.width  = (sma_buy_pct  ?? 50)+'%';
+  document.getElementById('smaSellBar').style.width = (sma_sell_pct ?? 50)+'%';
+  if (sma_values) {
+    // Stack state pill
+    const stackEl = document.getElementById('smaStack');
+    if (stackEl) {
+      stackEl.textContent = sma_values.stack ?? '—';
+      stackEl.style.color = sma_values.stack?.includes('BULL') ? 'var(--buy)'
+                          : sma_values.stack?.includes('BEAR') ? 'var(--sell)'
+                          : 'var(--text-muted)';
+    }
+    document.getElementById('sma8').textContent  = sma_values.sma8  ?? '—';
+    document.getElementById('sma19').textContent = sma_values.sma19 ?? '—';
+    document.getElementById('sma50').textContent = sma_values.sma50 ?? '—';
+    setSlope('slopeSma8',  sma_values.slope_sma8);
+    setSlope('slopeSma19', sma_values.slope_sma19);
+    setSlope('slopeSma50', sma_values.slope_sma50);
+    // Crossover trigger age
+    const bullEl = document.getElementById('bullCross');
+    const bearEl = document.getElementById('bearCross');
+    if (bullEl) {
+      const age = sma_values.bull_cross_bars_ago;
+      bullEl.textContent = age != null ? age + ' bar' + (age === 1 ? '' : 's') + ' ago' : 'none recent';
+      bullEl.style.color = age != null && age <= 5 ? 'var(--buy)' : 'var(--text-muted)';
+    }
+    if (bearEl) {
+      const age = sma_values.bear_cross_bars_ago;
+      bearEl.textContent = age != null ? age + ' bar' + (age === 1 ? '' : 's') + ' ago' : 'none recent';
+      bearEl.style.color = age != null && age <= 5 ? 'var(--sell)' : 'var(--text-muted)';
+    }
+  }
+
+  // Prob history
+  const now = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  probHistory.labels.push(now);
+  probHistory.buy.push(buy_pct ?? 50);
+  probHistory.sell.push(sell_pct ?? 50);
+  if (probHistory.labels.length > MAX_PROB) { probHistory.labels.shift(); probHistory.buy.shift(); probHistory.sell.shift(); }
+  probChart.data.labels            = probHistory.labels;
+  probChart.data.datasets[0].data  = probHistory.buy;
+  probChart.data.datasets[1].data  = probHistory.sell;
+  probChart.update('none');
+}
+
+function applyHistory(history) {
+  if (!history || !history.length) return;
+  maChart.data.labels             = history.map(h => fmtTime(h.time));
+  maChart.data.datasets[0].data   = history.map(h => h.close);
+  maChart.data.datasets[1].data   = history.map(h => h.ema20);
+  maChart.data.datasets[2].data   = history.map(h => h.ema50);
+  maChart.data.datasets[3].data   = history.map(h => h.ema200);
+  maChart.data.datasets[4].data   = history.map(h => h.sma8);
+  maChart.data.datasets[5].data   = history.map(h => h.sma19);
+  maChart.data.datasets[6].data   = history.map(h => h.sma50);
+  maChart.update('none');
+}
+
+function setStatus(connected, demoMode, hasError) {
+  const badge = document.getElementById('statusBadge');
+  const text  = document.getElementById('statusText');
+  badge.className = 'status-badge';
+  if (hasError)     { text.textContent = 'Error'; }
+  else if (demoMode){ badge.classList.add('demo');      text.textContent = 'Demo Mode'; }
+  else if (connected){ badge.classList.add('connected'); text.textContent = 'MT5 Live'; }
+  else               { text.textContent = 'Connecting…'; }
+}
+
+let histCounter = 0;
+
+async function fetchAll() {
+  ringStart = Date.now();
+  try {
+    const sigRes  = await fetch(`${API_BASE}/api/signal`);
+    const sigJson = await sigRes.json();
+
+    const errBanner = document.getElementById('error-banner');
+    if (sigJson.error) {
+      document.getElementById('error-msg').textContent = sigJson.error;
+      errBanner.style.display = 'flex';
+    } else {
+      errBanner.style.display = 'none';
+    }
+
+    setStatus(sigJson.ok, sigJson.data?.demo_mode, !!sigJson.error);
+
+    if (sigJson.data && Object.keys(sigJson.data).length > 0) applySignal(sigJson.data);
+
+    if (sigJson.last_update) {
+      document.getElementById('lastUpdate').textContent =
+        new Date(sigJson.last_update).toLocaleTimeString('en-GB',
+          { hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone:'UTC' }) + ' UTC';
+    }
+
+    histCounter++;
+    if (histCounter % 3 === 1) {
+      const histRes  = await fetch(`${API_BASE}/api/history`);
+      const histJson = await histRes.json();
+      if (histJson.data) applyHistory(histJson.data);
+    }
+
+  } catch {
+    const errBanner = document.getElementById('error-banner');
+    document.getElementById('error-msg').textContent =
+      'Cannot reach server at ' + API_BASE + '. Is server.py running?';
+    errBanner.style.display = 'flex';
+    setStatus(false, false, true);
+  }
+}
+
+// ── Backtest ──────────────────────────────────────────────────────────────────
+let btPriceChart = null;
+let btProbChart  = null;
+
+function buildBtCharts() {
+  if (!btPriceChart) {
+    btPriceChart = new Chart(
+      document.getElementById('btPriceChart').getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          { label:'Close', data:[], borderColor:'#fbbf05', borderWidth:1.5, pointRadius:0, tension:0.2, fill:false },
+          { label:'EMA20', data:[], borderColor:'#8b5cf6', borderWidth:1,   pointRadius:0, tension:0.4, fill:false },
+          { label:'EMA50', data:[], borderColor:'#a78bfa', borderWidth:1,   pointRadius:0, tension:0.4, fill:false, borderDash:[4,3] },
+          { label:'EMA200',data:[], borderColor:'#c4b5fd', borderWidth:1.3, pointRadius:0, tension:0.4, fill:false, borderDash:[8,4] },
+          { label:'SMA8',  data:[], borderColor:'#f97316', borderWidth:1,   pointRadius:0, tension:0.3, fill:false },
+          { label:'SMA19', data:[], borderColor:'#fb923c', borderWidth:1,   pointRadius:0, tension:0.3, fill:false, borderDash:[4,3] },
+          { label:'SMA50', data:[], borderColor:'#fdba74', borderWidth:1,   pointRadius:0, tension:0.3, fill:false, borderDash:[8,4] },
+        ]
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        interaction:{ mode:'index', intersect:false },
+        plugins:{ legend:{ display:false }, tooltip:{
+          backgroundColor:'rgba(14,20,32,0.95)', borderColor:'rgba(255,255,255,0.1)', borderWidth:1,
+          callbacks:{ label: i => ` ${i.dataset.label}: ${i.parsed.y?.toFixed(2)??'—'}` }
+        }},
+        scales:{
+          x:{ ticks:{ maxTicksLimit:10, maxRotation:0 }, grid:{ color:'rgba(255,255,255,0.04)' } },
+          y:{ ticks:{ maxTicksLimit:6 }, grid:{ color:'rgba(255,255,255,0.04)' }, position:'right' }
+        }
+      }
+    });
+  }
+  if (!btProbChart) {
+    btProbChart = new Chart(
+      document.getElementById('btProbChart').getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          { label:'Buy %',  data:[], borderColor:'#22d3a0', backgroundColor:'rgba(34,211,160,0.1)', borderWidth:1.5, pointRadius:0, tension:0.3, fill:true },
+          { label:'Sell %', data:[], borderColor:'#f4566a', backgroundColor:'rgba(244,86,106,0.1)', borderWidth:1.5, pointRadius:0, tension:0.3, fill:true },
+        ]
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        interaction:{ mode:'index', intersect:false },
+        plugins:{ legend:{ display:false }, tooltip:{
+          backgroundColor:'rgba(14,20,32,0.95)', borderColor:'rgba(255,255,255,0.1)', borderWidth:1,
+          callbacks:{ label: i => ` ${i.dataset.label}: ${i.parsed.y?.toFixed(1)}%` }
+        }},
+        scales:{
+          x:{ ticks:{ maxTicksLimit:10, maxRotation:0 }, grid:{ color:'rgba(255,255,255,0.04)' } },
+          y:{ min:0, max:100, ticks:{ callback:v=>v+'%', stepSize:25 }, grid:{ color:'rgba(255,255,255,0.04)' }, position:'right' }
+        }
+      }
+    });
+  }
+}
+
+function fmtWinRate(v) {
+  if (v === null || v === undefined) return { text: 'N/A', color: 'var(--text-muted)' };
+  const color = v >= 55 ? 'var(--buy)' : v >= 45 ? '#fbbf05' : 'var(--sell)';
+  return { text: v.toFixed(1) + '%', color };
+}
+
+async function loadBacktest() {
+  const btn = document.getElementById('btRunBtn');
+  btn.textContent = '⏳ Running…';
+  btn.disabled = true;
+
+  try {
+    const res  = await fetch(`${API_BASE}/api/backtest`);
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || 'Backtest failed');
+
+    const d = json.data;
+
+    // ── Stat cards ──────────────────────────────────────────────────────
+    const horizons = [
+      { suffix:'3h',  el3:'bt3hBuy',  el4:'bt3hSell',  elC:'bt3hCounts'  },
+      { suffix:'6h',  el3:'bt6hBuy',  el4:'bt6hSell',  elC:'bt6hCounts'  },
+      { suffix:'24h', el3:'bt24hBuy', el4:'bt24hSell',  elC:'bt24hCounts' },
+    ];
+    for (const h of horizons) {
+      const key = 'normal_' + h.suffix;
+      const s = d.stats[key];
+      const buyFmt  = fmtWinRate(s?.buy_winrate);
+      const sellFmt = fmtWinRate(s?.sell_winrate);
+      document.getElementById(h.el3).textContent  = buyFmt.text;
+      document.getElementById(h.el3).style.color  = buyFmt.color;
+      document.getElementById(h.el4).textContent  = sellFmt.text;
+      document.getElementById(h.el4).style.color  = sellFmt.color;
+      document.getElementById(h.elC).textContent  =
+        `${s?.buy_signals ?? 0} buy signals · ${s?.sell_signals ?? 0} sell signals`;
+    }
+
+    // ── Signal distribution ─────────────────────────────────────────────
+    const distEl = document.getElementById('btDist');
+    distEl.innerHTML = '';
+    const total = Object.values(d.signal_counts).reduce((a,b)=>a+b,0) || 1;
+    const entries = [
+      ['STRONG BUY',  'var(--buy)'],
+      ['BUY',         '#34d399'],
+      ['WEAK BUY',    '#6ee7b7'],
+      ['NEUTRAL',     'var(--text-muted)'],
+      ['WEAK SELL',   '#fca5a5'],
+      ['SELL',        '#fb7185'],
+      ['STRONG SELL', 'var(--sell)'],
+    ];
+    for (const [lbl, color] of entries) {
+      const count = d.signal_counts[lbl] ?? 0;
+      const pct   = (count / total * 100).toFixed(1);
+      distEl.innerHTML += `
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div style="width:70px;font-size:10px;color:${color};white-space:nowrap">${lbl}</div>
+          <div style="flex:1;background:rgba(255,255,255,0.05);border-radius:4px;height:6px;overflow:hidden">
+            <div style="width:${pct}%;background:${color};height:100%;border-radius:4px;transition:width 1s ease"></div>
+          </div>
+          <div style="width:36px;text-align:right;color:var(--text-muted)">${pct}%</div>
+        </div>`;
+    }
+
+    // ── Charts ──────────────────────────────────────────────────────────
+    buildBtCharts();
+
+    const bars   = d.bars;
+    const labels = bars.map(b => {
+      const dt = new Date(b.time);
+      return dt.toLocaleDateString('en-GB',{month:'short',day:'numeric'})
+           + ' '
+           + dt.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',timeZone:'UTC'});
+    });
+
+    btPriceChart.data.labels           = labels;
+    btPriceChart.data.datasets[0].data = bars.map(b => b.close);
+    btPriceChart.data.datasets[1].data = bars.map(b => b.ema20);
+    btPriceChart.data.datasets[2].data = bars.map(b => b.ema50);
+    btPriceChart.data.datasets[3].data = bars.map(b => b.ema200);
+    btPriceChart.data.datasets[4].data = bars.map(b => b.sma8);
+    btPriceChart.data.datasets[5].data = bars.map(b => b.sma19);
+    btPriceChart.data.datasets[6].data = bars.map(b => b.sma50_val);
+    btPriceChart.update('none');
+
+    btProbChart.data.labels           = labels;
+    btProbChart.data.datasets[0].data = bars.map(b => b.buy_pct);
+    btProbChart.data.datasets[1].data = bars.map(b => b.sell_pct);
+    btProbChart.update('none');
+
+    // Show sections
+    document.getElementById('btStats').style.display       = 'block';
+    document.getElementById('btChartSection').style.display = 'block';
+    document.getElementById('btProbSection').style.display  = 'block';
+
+    const demo = d.demo_mode ? ' (demo data)' : '';
+    btn.textContent = `✓ ${d.meta.total_bars} bars · ${d.meta.days}d${demo}`;
+    btn.style.background = 'linear-gradient(135deg,#22d3a0,#059669)';
+    btn.style.color = '#fff';
+
+  } catch (err) {
+    btn.textContent = '✗ Error – retry';
+    btn.style.background = 'rgba(244,86,106,0.2)';
+    btn.style.color = 'var(--sell)';
+    btn.style.border = '1px solid var(--sell)';
+    console.error('Backtest error:', err);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  buildMAChart();
+  buildProbChart();
+  fetchAll();
+  setInterval(fetchAll, REFRESH_MS);
+});
+</script>
+
+</body>
+</html>
