@@ -1,3 +1,4 @@
+# Note: MetaTrader5 officially requires Python <= 3.12 (it will throw an error on 3.13+ via pip)
 numpy
 flask
 flask-cors
